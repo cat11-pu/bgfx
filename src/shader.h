@@ -10,6 +10,8 @@
 
 namespace bgfx
 {
+	static constexpr uint8_t kShaderBinVersion = 14;
+
 	static constexpr uint8_t kSpirvVertexBinding   = 0;
 	static constexpr uint8_t kSpirvFragmentBinding = 1;
 	static constexpr uint8_t kSpirvBindShift       = 2;
@@ -81,6 +83,9 @@ namespace bgfx
 
 	///
 	void disassemble(bx::WriterI* _writer, const void* _data, uint32_t _size, bx::Error* _err = NULL);
+
+	///
+	bool validateShaderBinary(const void* _data, uint32_t _size);
 
 } // namespace bgfx
 

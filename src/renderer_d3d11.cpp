@@ -4752,10 +4752,13 @@ namespace bgfx { namespace d3d11
 				if (PredefinedUniform::Count != predefined)
 				{
 					kind = "predefined";
-					m_predefined[m_numPredefined].m_loc   = regIndex;
-					m_predefined[m_numPredefined].m_count = regCount;
-					m_predefined[m_numPredefined].m_type  = uint8_t(predefined|fragmentBit);
-					m_numPredefined++;
+					if (m_numPredefined < BX_COUNTOF(m_predefined) )
+					{
+						m_predefined[m_numPredefined].m_loc   = regIndex;
+						m_predefined[m_numPredefined].m_count = regCount;
+						m_predefined[m_numPredefined].m_type  = uint8_t(predefined|fragmentBit);
+						m_numPredefined++;
+					}
 				}
 				else if (0 == (kUniformSamplerBit & type) )
 				{

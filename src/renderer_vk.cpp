@@ -7335,10 +7335,13 @@ VK_DESTROY
 					if (PredefinedUniform::Count != predefined)
 					{
 						kind = "predefined";
-						m_predefined[m_numPredefined].m_loc   = regIndex;
-						m_predefined[m_numPredefined].m_count = regCount;
-						m_predefined[m_numPredefined].m_type  = uint8_t(predefined|fragmentBit);
-						m_numPredefined++;
+						if (m_numPredefined < BX_COUNTOF(m_predefined) )
+						{
+							m_predefined[m_numPredefined].m_loc   = regIndex;
+							m_predefined[m_numPredefined].m_count = regCount;
+							m_predefined[m_numPredefined].m_type  = uint8_t(predefined|fragmentBit);
+							m_numPredefined++;
+						}
 					}
 					else if (UniformType::End == (~kUniformMask & type) )
 					{
@@ -7355,6 +7358,11 @@ VK_DESTROY
 
 						const uint16_t stage = regIndex - reverseShift; // regIndex is used for buffer binding index
 
+						if (stage >= BX_COUNTOF(m_bindInfo) )
+						{
+							continue;
+						}
+
 						m_bindInfo[stage].type = isBuffer ? BindType::Buffer : BindType::Image;
 						m_bindInfo[stage].uniformHandle  = { 0 };
 						m_bindInfo[stage].binding        = regIndex;
@@ -7368,13 +7376,16 @@ VK_DESTROY
 
 							if (VK_IMAGE_VIEW_TYPE_MAX_ENUM != viewType)
 							{
-								m_bindInfo[stage].index = m_numTextures;
-								m_textures[m_numTextures] =
+								if (m_numTextures < BX_COUNTOF(m_textures) )
 								{
-									.type = viewType,
-									.msaa = false,
-								};
-								m_numTextures++;
+									m_bindInfo[stage].index = m_numTextures;
+									m_textures[m_numTextures] =
+									{
+										.type = viewType,
+										.msaa = false,
+									};
+									m_numTextures++;
+								}
 							}
 						}
 
@@ -7388,8 +7399,18 @@ VK_DESTROY
 
 						const uint16_t stage = regIndex - reverseShift; // regIndex is used for image/sampler binding index
 
+						if (stage >= BX_COUNTOF(m_bindInfo) )
+						{
+							continue;
+						}
+
 						const UniformRegInfo* info = s_renderVK->m_uniformReg.find(name);
 						BX_ASSERT(NULL != info, "User defined uniform '%s' is not found, it won't be set.", name);
+
+						if (NULL == info)
+						{
+							continue;
+						}
 
 						m_bindInfo[stage].uniformHandle    = info->m_handle;
 						m_bindInfo[stage].type             = BindType::Sampler;
@@ -7403,17 +7424,20 @@ VK_DESTROY
 
 						if (VK_IMAGE_VIEW_TYPE_MAX_ENUM != viewType)
 						{
-							m_bindInfo[stage].index = m_numTextures;
-							m_textures[m_numTextures] =
+							if (m_numTextures < BX_COUNTOF(m_textures) )
 							{
-								.type = viewType,
-								.msaa = false
-									|| isShaderVerLess(magic, 13)
-									|| TextureDimension::Dimension2DMS      == idToTextureDimension(texDimension)
-									|| TextureDimension::Dimension2DMSArray == idToTextureDimension(texDimension)
-									,
-							};
-							m_numTextures++;
+								m_bindInfo[stage].index = m_numTextures;
+								m_textures[m_numTextures] =
+								{
+									.type = viewType,
+									.msaa = false
+										|| isShaderVerLess(magic, 13)
+										|| TextureDimension::Dimension2DMS      == idToTextureDimension(texDimension)
+										|| TextureDimension::Dimension2DMSArray == idToTextureDimension(texDimension)
+										,
+								};
+								m_numTextures++;
+							}
 						}
 
 						kind = "sampler";

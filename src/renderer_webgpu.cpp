@@ -5068,10 +5068,13 @@ WGPU_IMPORT
 					if (PredefinedUniform::Count != predefined)
 					{
 						kind = "predefined";
-						m_predefined[m_numPredefined].m_loc   = regIndex;
-						m_predefined[m_numPredefined].m_count = regCount;
-						m_predefined[m_numPredefined].m_type  = uint8_t(predefined|fragmentBit);
-						m_numPredefined++;
+						if (m_numPredefined < BX_COUNTOF(m_predefined) )
+						{
+							m_predefined[m_numPredefined].m_loc   = regIndex;
+							m_predefined[m_numPredefined].m_count = regCount;
+							m_predefined[m_numPredefined].m_type  = uint8_t(predefined|fragmentBit);
+							m_numPredefined++;
+						}
 					}
 					else if (UniformType::End == (~kUniformMask & type) )
 					{
@@ -5085,6 +5088,11 @@ WGPU_IMPORT
 						const uint8_t reverseShift = kSpirvBindShift;
 
 						const uint16_t stage = regIndex - reverseShift; // regIndex is used for buffer binding index
+						if (stage >= BX_COUNTOF(m_shaderBinding) )
+						{
+							continue;
+						}
+
 						ShaderBinding& shaderBind = m_shaderBinding[stage];
 
 						shaderBind.type = isBuffer ? ShaderBinding::Type::Buffer : ShaderBinding::Type::Image;
@@ -5125,6 +5133,12 @@ WGPU_IMPORT
 						const uint8_t reverseShift = kSpirvBindShift;
 
 						const uint16_t stage = regIndex - reverseShift; // regIndex is used for image/sampler binding index
+						if (NULL == info
+						||  stage >= BX_COUNTOF(m_shaderBinding) )
+						{
+							continue;
+						}
+
 						ShaderBinding& shaderBind = m_shaderBinding[stage];
 
 						shaderBind.uniformHandle    = info->m_handle;

@@ -5122,6 +5122,12 @@ namespace bgfx
 
 		void setBind(uint8_t _stage, const Binding& _bind)
 		{
+			if (_stage >= BX_COUNTOF(m_bind.m_bind) )
+			{
+				BX_WARN(false, "Invalid bind stage %d (max %d).", _stage, BX_COUNTOF(m_bind.m_bind) );
+				return;
+			}
+
 			Binding& dst = m_bind.m_bind[_stage];
 			if (dst != _bind)
 			{
@@ -5497,6 +5503,13 @@ namespace bgfx
 
 		void setViewUniform(ViewId _id, UniformHandle _handle, const void* _value, uint16_t _num)
 		{
+			if (!isValid(_handle)
+			||  NULL == _value)
+			{
+				BX_WARN(false, "Invalid view uniform parameters (handle: %d).", _handle.idx);
+				return;
+			}
+
 			const UniformRef& uniform = getUniformRef(_handle);
 
 			const UniformFreq::Enum freq = UINT16_MAX == _id
@@ -5504,18 +5517,21 @@ namespace bgfx
 				: UniformFreq::View
 				;
 
-			BX_ASSERT(0 < uniform.m_refCount
-				, "Uniform reference count it 0 (handle %3d)!"
-				, _handle.idx
-				);
-			BX_ASSERT(uniform.m_freq == freq
-				, "Setting uniform per view, but uniform is created with different bgfx::UniformFreq::Enum!"
-				);
-			BX_ASSERT(_num == UINT16_MAX || uniform.m_num >= _num
-				, "Truncated uniform update. %d (max: %d)"
-				, _num, uniform.m_num
-				);
-			BX_UNUSED(freq);
+			if (0 >= uniform.m_refCount
+			||  uniform.m_freq != freq
+			||  uniform.m_type > UniformType::Mat4)
+			{
+				BX_WARN(false, "Setting invalid or mismatched view uniform (handle: %d).", _handle.idx);
+				return;
+			}
+
+			const uint16_t num = UINT16_MAX == _num ? uniform.m_num : _num;
+			if (0 == num
+			||  num > uniform.m_num)
+			{
+				BX_WARN(false, "Truncated uniform update. %d (max: %d)", num, uniform.m_num);
+				return;
+			}
 
 			UniformCacheKey key =
 			{
@@ -5529,27 +5545,43 @@ namespace bgfx
 			static_assert( ( (kViewHandleMask>>32)<<32) == kViewHandleMask, "View + handle must be in top 32 bits of 64-bit key.");
 			const uint32_t uniformKey = uint32_t(key.encode() >> 32);
 
-			setUniform(uniformKey, uniform.m_type, _value, _num);
+			setUniform(uniformKey, uniform.m_type, _value, num);
 		}
 
 		void setUniform(uint32_t _uniformKey, UniformType::Enum _type, const void* _value, uint16_t _num)
 		{
+			if (_type < UniformType::Sampler
+			||  UniformType::End == _type
+			||  _type > UniformType::Mat4
+			||  0 == _num
+			||  NULL == _value)
+			{
+				BX_WARN(false, "Invalid uniform cache parameters (type: %d, num: %d).", _type, _num);
+				return;
+			}
+
 			const uint32_t typeSize = g_uniformTypeSize[_type];
 			const uint32_t dataSize = _num * typeSize;
 
 			const uint32_t allocSize = bx::alignUp(dataSize, 16);
 
-			BX_ASSERT(allocSize <= UINT16_MAX-15
-				, "Uniform is too large for the uniform cache (%d bytes, max %d)!"
-				, allocSize
-				, UINT16_MAX-15
-				);
+			if (allocSize > UINT16_MAX-15)
+			{
+				BX_WARN(false, "Uniform is too large for the uniform cache (%d bytes, max %d)!"
+					, allocSize
+					, UINT16_MAX-15
+					);
+				return;
+			}
 
 			bx::HashMurmur3 murmur;
 			murmur.begin();
 			murmur.add(_type);
 			murmur.add(_num);
-			murmur.add(_value, dataSize);
+			if (0 != dataSize)
+			{
+				murmur.add(_value, dataSize);
+			}
 			const uint32_t hash = murmur.end();
 
 			uint32_t* keyHash = m_uniformKeyHashMap.find(_uniformKey);
@@ -7404,6 +7436,13 @@ namespace bgfx
 				return BGFX_INVALID_HANDLE;
 			}
 
+			if (!validateShaderBinary(_mem->data, _mem->size) )
+			{
+				BX_TRACE("Corrupted shader binary!");
+				release(_mem);
+				return BGFX_INVALID_HANDLE;
+			}
+
 			const uint32_t shaderHash = bx::hash<bx::HashMurmur2A>(_mem->data, _mem->size);
 			const uint16_t idx = m_shaderHashMap.find(shaderHash);
 			if (kInvalidHandle != idx)
@@ -7467,6 +7506,8 @@ namespace bgfx
 
 			UniformHandle* uniforms = (UniformHandle*)BX_STACK_ALLOC(count*sizeof(UniformHandle) );
 
+			bool parsed = true;
+
 			for (uint32_t ii = 0; ii < count; ++ii)
 			{
 				uint8_t nameSize = 0;
@@ -7512,6 +7553,14 @@ namespace bgfx
 				&&  UniformType::End != UniformType::Enum(type) )
 				{
 					const UniformHandle uniform = createUniform(name, UniformFreq::Count, UniformType::Enum(type), num);
+
+					if (!isValid(uniform) )
+					{
+						BX_TRACE("Failed to create uniform '%s' while parsing shader.", name);
+						parsed = false;
+						break;
+					}
+
 					uniforms[sr.m_num] = uniform;
 					sr.m_num++;
 
@@ -7523,6 +7572,21 @@ namespace bgfx
 						sr.m_numSamplers++;
 					}
 				}
+			}
+
+			if (!parsed
+			||  !err.isOk() )
+			{
+				for (uint32_t ii = 0; ii < sr.m_num; ++ii)
+				{
+					destroyUniform(uniforms[ii]);
+				}
+
+				m_shaderHashMap.removeByHandle(handle.idx);
+				m_shaderRef.release(handle.idx);
+				m_shaderHandle.free(handle.idx);
+				release(_mem);
+				return BGFX_INVALID_HANDLE;
 			}
 
 			if (0 != sr.m_num)
@@ -7545,7 +7609,8 @@ namespace bgfx
 		{
 			BGFX_MUTEX_SCOPE(m_resourceApiLock);
 
-			if (!isValid(_handle) )
+			if (!isValid(_handle)
+			||  !m_shaderHandle.isValid(_handle.idx) )
 			{
 				BX_WARN(false, "Passing invalid shader handle to bgfx::getShaderUniforms.");
 				return 0;
@@ -7589,7 +7654,12 @@ namespace bgfx
 		{
 			BGFX_MUTEX_SCOPE(m_resourceApiLock);
 
-			BGFX_CHECK_HANDLE("setName", m_shaderHandle, _handle);
+			if (!isValid(_handle)
+			||  !m_shaderHandle.isValid(_handle.idx) )
+			{
+				BX_WARN(false, "Passing invalid shader handle to bgfx::setName.");
+				return;
+			}
 
 			ShaderRef& sr = m_shaderRef[_handle.idx];
 			sr.m_name = bx::String(_name, &m_stringPool);
@@ -7601,9 +7671,8 @@ namespace bgfx
 		{
 			BGFX_MUTEX_SCOPE(m_resourceApiLock);
 
-			BGFX_CHECK_HANDLE("destroyShader", m_shaderHandle, _handle);
-
-			if (!isValid(_handle) )
+			if (!isValid(_handle)
+			||  !m_shaderHandle.isValid(_handle.idx) )
 			{
 				BX_WARN(false, "Passing invalid shader handle to bgfx::destroyShader.");
 				return;
@@ -7656,7 +7725,9 @@ namespace bgfx
 			BGFX_MUTEX_SCOPE(m_resourceApiLock);
 
 			if (!isValid(_vsh)
-			||  !isValid(_fsh) )
+			||  !isValid(_fsh)
+			||  !m_shaderHandle.isValid(_vsh.idx)
+			||  !m_shaderHandle.isValid(_fsh.idx) )
 			{
 				BX_TRACE("Vertex/fragment shader is invalid (vsh %d, fsh %d).", _vsh.idx, _fsh.idx);
 				return BGFX_INVALID_HANDLE;
@@ -7747,7 +7818,8 @@ namespace bgfx
 		{
 			BGFX_MUTEX_SCOPE(m_resourceApiLock);
 
-			if (!isValid(_vsh) )
+			if (!isValid(_vsh)
+			||  !m_shaderHandle.isValid(_vsh.idx) )
 			{
 				BX_WARN(false, "Compute shader is invalid (vsh %d).", _vsh.idx);
 				return BGFX_INVALID_HANDLE;
@@ -7798,7 +7870,12 @@ namespace bgfx
 		{
 			BGFX_MUTEX_SCOPE(m_resourceApiLock);
 
-			BGFX_CHECK_HANDLE("destroyProgram", m_programHandle, _handle);
+			if (!isValid(_handle)
+			||  !m_programHandle.isValid(_handle.idx) )
+			{
+				BX_WARN(false, "Passing invalid program handle to bgfx::destroyProgram.");
+				return;
+			}
 
 			ProgramRef& pr = m_programRef[_handle.idx];
 			shaderDecRef(pr.m_vsh);
@@ -8593,6 +8670,21 @@ namespace bgfx
 		{
 			BGFX_MUTEX_SCOPE(m_resourceApiLock);
 
+			if (NULL == _name
+			||  _type < UniformType::Sampler
+			||  UniformType::End == _type
+			||  _type > UniformType::Mat4
+			||  _freq < UniformFreq::Draw
+			||  _freq > UniformFreq::Count)
+			{
+				BX_WARN(false, "Invalid uniform parameters (name: %s, type: %d, freq: %d)."
+					, NULL != _name ? _name : "<null>"
+					, _type
+					, _freq
+					);
+				return BGFX_INVALID_HANDLE;
+			}
+
 			{
 				bx::ErrorAssert err;
 				isIdentifierValid(_name, &err);
@@ -8684,7 +8776,13 @@ namespace bgfx
 		{
 			BGFX_MUTEX_SCOPE(m_resourceApiLock);
 
-			BGFX_CHECK_HANDLE("getUniformInfo", m_uniformHandle, _handle);
+			if (!isValid(_handle)
+			||  !m_uniformHandle.isValid(_handle.idx) )
+			{
+				BX_WARN(false, "Passing invalid uniform handle to bgfx::getUniformInfo.");
+				bx::memSet(&_info, 0, sizeof(_info) );
+				return;
+			}
 
 			UniformRef& uniform = m_uniformRef[_handle.idx];
 			bx::strCopy(_info.name, sizeof(_info.name), uniform.m_name);
@@ -8696,10 +8794,21 @@ namespace bgfx
 		{
 			BGFX_MUTEX_SCOPE(m_resourceApiLock);
 
-			BGFX_CHECK_HANDLE("destroyUniform", m_uniformHandle, _handle);
+			if (!isValid(_handle)
+			||  !m_uniformHandle.isValid(_handle.idx) )
+			{
+				BX_WARN(false, "Passing invalid uniform handle to bgfx::destroyUniform.");
+				return;
+			}
 
 			UniformRef& uniform = m_uniformRef[_handle.idx];
 			BX_ASSERT(uniform.m_refCount > 0, "Destroying already destroyed uniform %d.", _handle.idx);
+			if (0 >= uniform.m_refCount)
+			{
+				BX_WARN(false, "Destroying already destroyed uniform %d.", _handle.idx);
+				return;
+			}
+
 			int32_t refs = --uniform.m_refCount;
 
 			if (0 == refs)
@@ -8911,6 +9020,13 @@ namespace bgfx
 
 		BGFX_API_FUNC(void setViewUniform(ViewId _id, UniformHandle _handle, const void* _value, uint16_t _num) )
 		{
+			if (!isValid(_handle)
+			||  !m_uniformHandle.isValid(_handle.idx) )
+			{
+				BX_WARN(false, "Passing invalid uniform handle to bgfx::setViewUniform.");
+				return;
+			}
+
 			m_uniformCache.setViewUniform(_id, _handle, _value, _num);
 		}
 

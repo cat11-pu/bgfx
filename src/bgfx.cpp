@@ -1953,6 +1953,14 @@ namespace bgfx
 
 	void UniformBuffer::writeUniform(UniformType::Enum _type, uint16_t _loc, const void* _value, uint16_t _num)
 	{
+		if (_type < UniformType::Sampler
+		||  _type > UniformType::Mat4
+		||  (0 != _num && NULL == _value) )
+		{
+			BX_WARN(false, "Invalid uniform buffer write (type: %d, num: %d).", _type, _num);
+			return;
+		}
+
 		const uint32_t opcode = encodeOpcode(uint8_t(_type), _loc, _num, true);
 		write(opcode);
 		write(_value, g_uniformTypeSize[_type]*_num);
@@ -1960,6 +1968,14 @@ namespace bgfx
 
 	void UniformBuffer::writeUniformRef(UniformType::Enum _type, uint16_t _loc, const void* _ptr, uint16_t _num)
 	{
+		if (_type < UniformType::Sampler
+		||  _type > UniformType::Mat4
+		||  NULL == _ptr)
+		{
+			BX_WARN(false, "Invalid uniform buffer reference (type: %d).", _type);
+			return;
+		}
+
 		const uint32_t opcode = encodeOpcode(uint8_t(_type) | kUniformRefBit, _loc, _num, true);
 		write(opcode);
 		write(&_ptr, sizeof(_ptr) );
@@ -1967,6 +1983,13 @@ namespace bgfx
 
 	void UniformBuffer::writeUniformHandle(uint8_t _type, uint16_t _loc, UniformHandle _handle, uint16_t _num)
 	{
+		if ( (_type & ~kUniformMask) > UniformType::Mat4)
+		{
+			// Shader parser validates this before it reaches the constant buffer.
+			BX_WARN(false, "Invalid shader uniform type %d.", _type);
+			return;
+		}
+
 		const uint32_t opcode = encodeOpcode(_type, _loc, _num, false);
 		write(opcode);
 		write(&_handle, sizeof(UniformHandle) );
@@ -4916,22 +4939,62 @@ namespace bgfx
 
 	void Encoder::setUniform(UniformHandle _handle, const void* _value, uint16_t _num)
 	{
-		BGFX_CHECK_HANDLE("setUniform", s_ctx->m_uniformHandle, _handle);
+		if (!isValid(_handle)
+		||  !s_ctx->m_uniformHandle.isValid(_handle.idx)
+		||  NULL == _value)
+		{
+			BX_WARN(false, "Invalid uniform handle or value (handle: %d).", _handle.idx);
+			return;
+		}
+
 		const UniformRef& uniform = s_ctx->m_uniformRef[_handle.idx];
-		BX_ASSERT(uniform.m_freq == UniformFreq::Draw, "Setting uniform per draw call, but uniform is created with different bgfx::UniformFreq::Enum!");
-		BX_ASSERT(isValid(_handle) && 0 < uniform.m_refCount, "Setting invalid uniform (handle %3d)!", _handle.idx);
-		BX_ASSERT(_num == UINT16_MAX || uniform.m_num >= _num, "Truncated uniform update. %d (max: %d)", _num, uniform.m_num);
-		BGFX_ENCODER(setUniform(uniform.m_type, _handle, _value, UINT16_MAX != _num ? _num : uniform.m_num) );
+		if (0 >= uniform.m_refCount
+		||  uniform.m_freq != UniformFreq::Draw
+		||  uniform.m_type > UniformType::Mat4)
+		{
+			BX_WARN(false, "Setting invalid or non-draw uniform (handle: %d).", _handle.idx);
+			return;
+		}
+
+		const uint16_t num = UINT16_MAX == _num ? uniform.m_num : _num;
+		if (0 == num
+		||  num > uniform.m_num)
+		{
+			BX_WARN(false, "Truncated uniform update. %d (max: %d)", num, uniform.m_num);
+			return;
+		}
+
+		BGFX_ENCODER(setUniform(uniform.m_type, _handle, _value, num) );
 	}
 
 	void Encoder::setUniformRef(UniformHandle _handle, const void* _ptr, uint16_t _num)
 	{
-		BGFX_CHECK_HANDLE("setUniformRef", s_ctx->m_uniformHandle, _handle);
+		if (!isValid(_handle)
+		||  !s_ctx->m_uniformHandle.isValid(_handle.idx)
+		||  NULL == _ptr)
+		{
+			BX_WARN(false, "Invalid uniform handle or pointer (handle: %d).", _handle.idx);
+			return;
+		}
+
 		const UniformRef& uniform = s_ctx->m_uniformRef[_handle.idx];
-		BX_ASSERT(uniform.m_freq == UniformFreq::Draw, "Setting uniform per draw call, but uniform is created with different bgfx::UniformFreq::Enum!");
-		BX_ASSERT(isValid(_handle) && 0 < uniform.m_refCount, "Setting invalid uniform (handle %3d)!", _handle.idx);
-		BX_ASSERT(_num == UINT16_MAX || uniform.m_num >= _num, "Truncated uniform update. %d (max: %d)", _num, uniform.m_num);
-		BGFX_ENCODER(setUniformRef(uniform.m_type, _handle, _ptr, UINT16_MAX != _num ? _num : uniform.m_num) );
+		if (0 >= uniform.m_refCount
+		||  uniform.m_freq != UniformFreq::Draw
+		||  uniform.m_type > UniformType::Mat4)
+		{
+			BX_WARN(false, "Setting invalid or non-draw uniform (handle: %d).", _handle.idx);
+			return;
+		}
+
+		const uint16_t num = UINT16_MAX == _num ? uniform.m_num : _num;
+		if (0 == num
+		||  num > uniform.m_num)
+		{
+			BX_WARN(false, "Truncated uniform update. %d (max: %d)", num, uniform.m_num);
+			return;
+		}
+
+		BGFX_ENCODER(setUniformRef(uniform.m_type, _handle, _ptr, num) );
 	}
 
 	void Encoder::setIndexBuffer(IndexBufferHandle _handle)
@@ -4941,7 +5004,13 @@ namespace bgfx
 
 	void Encoder::setIndexBuffer(IndexBufferHandle _handle, uint32_t _firstIndex, uint32_t _numIndices)
 	{
-		BGFX_CHECK_HANDLE("setIndexBuffer", s_ctx->m_indexBufferHandle, _handle);
+		if (!isValid(_handle)
+		||  !s_ctx->m_indexBufferHandle.isValid(_handle.idx) )
+		{
+			BX_WARN(false, "Invalid index buffer handle %d.", _handle.idx);
+			return;
+		}
+
 		const IndexBuffer& ib = s_ctx->m_indexBuffers[_handle.idx];
 		BGFX_ENCODER(setIndexBuffer(_handle, ib, _firstIndex, _numIndices) );
 	}
@@ -4953,7 +5022,13 @@ namespace bgfx
 
 	void Encoder::setIndexBuffer(DynamicIndexBufferHandle _handle, uint32_t _firstIndex, uint32_t _numIndices)
 	{
-		BGFX_CHECK_HANDLE("setIndexBuffer", s_ctx->m_dynamicIndexBufferHandle, _handle);
+		if (!isValid(_handle)
+		||  !s_ctx->m_dynamicIndexBufferHandle.isValid(_handle.idx) )
+		{
+			BX_WARN(false, "Invalid dynamic index buffer handle %d.", _handle.idx);
+			return;
+		}
+
 		const DynamicIndexBuffer& dib = s_ctx->m_dynamicIndexBuffers[_handle.idx];
 		BGFX_ENCODER(setIndexBuffer(_handle, dib, _firstIndex, _numIndices) );
 	}
@@ -4965,8 +5040,19 @@ namespace bgfx
 
 	void Encoder::setIndexBuffer(const TransientIndexBuffer* _tib, uint32_t _firstIndex, uint32_t _numIndices)
 	{
-		BX_ASSERT(NULL != _tib, "_tib can't be NULL");
-		BGFX_CHECK_HANDLE("setIndexBuffer", s_ctx->m_indexBufferHandle, _tib->handle);
+		if (NULL == _tib)
+		{
+			BX_WARN(false, "Transient index buffer can't be NULL.");
+			return;
+		}
+
+		if (!isValid(_tib->handle)
+		||  !s_ctx->m_indexBufferHandle.isValid(_tib->handle.idx) )
+		{
+			BX_WARN(false, "Invalid transient index buffer handle %d.", _tib->handle.idx);
+			return;
+		}
+
 		BGFX_ENCODER(setIndexBuffer(_tib, _firstIndex, _numIndices) );
 	}
 
@@ -4978,8 +5064,26 @@ namespace bgfx
 		, VertexLayoutHandle _layoutHandle
 	)
 	{
-		BGFX_CHECK_HANDLE("setVertexBuffer", s_ctx->m_vertexBufferHandle, _handle);
-		BGFX_CHECK_HANDLE_INVALID_OK("setVertexBuffer", s_ctx->m_layoutHandle, _layoutHandle);
+		if (_stream >= BGFX_CONFIG_MAX_VERTEX_STREAMS)
+		{
+			BX_WARN(false, "Invalid vertex stream %d (max %d).", _stream, BGFX_CONFIG_MAX_VERTEX_STREAMS);
+			return;
+		}
+
+		if (!isValid(_handle)
+		||  !s_ctx->m_vertexBufferHandle.isValid(_handle.idx) )
+		{
+			BX_WARN(false, "Invalid vertex buffer handle %d.", _handle.idx);
+			return;
+		}
+
+		if (isValid(_layoutHandle)
+		&&  !s_ctx->m_layoutHandle.isValid(_layoutHandle.idx) )
+		{
+			BX_WARN(false, "Invalid vertex layout handle %d.", _layoutHandle.idx);
+			return;
+		}
+
 		BGFX_ENCODER(setVertexBuffer(_stream, _handle, _startVertex, _numVertices, _layoutHandle) );
 	}
 
@@ -4996,8 +5100,26 @@ namespace bgfx
 		, VertexLayoutHandle _layoutHandle
 		)
 	{
-		BGFX_CHECK_HANDLE("setVertexBuffer", s_ctx->m_dynamicVertexBufferHandle, _handle);
-		BGFX_CHECK_HANDLE_INVALID_OK("setVertexBuffer", s_ctx->m_layoutHandle, _layoutHandle);
+		if (_stream >= BGFX_CONFIG_MAX_VERTEX_STREAMS)
+		{
+			BX_WARN(false, "Invalid vertex stream %d (max %d).", _stream, BGFX_CONFIG_MAX_VERTEX_STREAMS);
+			return;
+		}
+
+		if (!isValid(_handle)
+		||  !s_ctx->m_dynamicVertexBufferHandle.isValid(_handle.idx) )
+		{
+			BX_WARN(false, "Invalid dynamic vertex buffer handle %d.", _handle.idx);
+			return;
+		}
+
+		if (isValid(_layoutHandle)
+		&&  !s_ctx->m_layoutHandle.isValid(_layoutHandle.idx) )
+		{
+			BX_WARN(false, "Invalid vertex layout handle %d.", _layoutHandle.idx);
+			return;
+		}
+
 		const DynamicVertexBuffer& dvb = s_ctx->m_dynamicVertexBuffers[_handle.idx];
 		BX_ASSERT(!isValid(_layoutHandle)
 			|| s_ctx->m_vertexLayoutRef.m_stride[_layoutHandle.idx] == dvb.m_stride
@@ -5021,9 +5143,32 @@ namespace bgfx
 		, VertexLayoutHandle _layoutHandle
 		)
 	{
-		BX_ASSERT(NULL != _tvb, "_tvb can't be NULL");
-		BGFX_CHECK_HANDLE("setVertexBuffer", s_ctx->m_vertexBufferHandle, _tvb->handle);
-		BGFX_CHECK_HANDLE_INVALID_OK("setVertexBuffer", s_ctx->m_layoutHandle, _layoutHandle);
+		if (_stream >= BGFX_CONFIG_MAX_VERTEX_STREAMS)
+		{
+			BX_WARN(false, "Invalid vertex stream %d (max %d).", _stream, BGFX_CONFIG_MAX_VERTEX_STREAMS);
+			return;
+		}
+
+		if (NULL == _tvb)
+		{
+			BX_WARN(false, "Transient vertex buffer can't be NULL.");
+			return;
+		}
+
+		if (!isValid(_tvb->handle)
+		||  !s_ctx->m_vertexBufferHandle.isValid(_tvb->handle.idx) )
+		{
+			BX_WARN(false, "Invalid transient vertex buffer handle %d.", _tvb->handle.idx);
+			return;
+		}
+
+		if (isValid(_layoutHandle)
+		&&  !s_ctx->m_layoutHandle.isValid(_layoutHandle.idx) )
+		{
+			BX_WARN(false, "Invalid vertex layout handle %d.", _layoutHandle.idx);
+			return;
+		}
+
 		BX_ASSERT(!isValid(_layoutHandle)
 			|| s_ctx->m_vertexLayoutRef.m_stride[_layoutHandle.idx] == _tvb->stride
 			, "Vertex layout override stride (%d) must match transient vertex buffer stride (%d)."
@@ -5050,20 +5195,37 @@ namespace bgfx
 
 	void Encoder::setInstanceDataBuffer(const InstanceDataBuffer* _idb, uint32_t _start, uint32_t _num)
 	{
-		BX_ASSERT(NULL != _idb, "_idb can't be NULL");
+		if (NULL == _idb)
+		{
+			BX_WARN(false, "Instance data buffer can't be NULL.");
+			return;
+		}
+
 		BGFX_ENCODER(setInstanceDataBuffer(_idb, _start, _num) );
 	}
 
 	void Encoder::setInstanceDataBuffer(VertexBufferHandle _handle, uint32_t _startVertex, uint32_t _num)
 	{
-		BGFX_CHECK_HANDLE("setInstanceDataBuffer", s_ctx->m_vertexBufferHandle, _handle);
+		if (!isValid(_handle)
+		||  !s_ctx->m_vertexBufferHandle.isValid(_handle.idx) )
+		{
+			BX_WARN(false, "Invalid instance vertex buffer handle %d.", _handle.idx);
+			return;
+		}
+
 		const VertexBuffer& vb = s_ctx->m_vertexBuffers[_handle.idx];
 		BGFX_ENCODER(setInstanceDataBuffer(_handle, _startVertex, _num, vb.m_stride) );
 	}
 
 	void Encoder::setInstanceDataBuffer(DynamicVertexBufferHandle _handle, uint32_t _startVertex, uint32_t _num)
 	{
-		BGFX_CHECK_HANDLE("setInstanceDataBuffer", s_ctx->m_dynamicVertexBufferHandle, _handle);
+		if (!isValid(_handle)
+		||  !s_ctx->m_dynamicVertexBufferHandle.isValid(_handle.idx) )
+		{
+			BX_WARN(false, "Invalid dynamic instance vertex buffer handle %d.", _handle.idx);
+			return;
+		}
+
 		const DynamicVertexBuffer& dvb = s_ctx->m_dynamicVertexBuffers[_handle.idx];
 		BGFX_ENCODER(setInstanceDataBuffer(_handle, dvb, _startVertex, _num) );
 	}
@@ -5075,8 +5237,26 @@ namespace bgfx
 
 	void Encoder::setTexture(uint8_t _stage, UniformHandle _sampler, TextureHandle _handle, uint32_t _flags)
 	{
-		BGFX_CHECK_HANDLE("setTexture/UniformHandle", s_ctx->m_uniformHandle, _sampler);
-		BGFX_CHECK_HANDLE_INVALID_OK("setTexture/TextureHandle", s_ctx->m_textureHandle, _handle);
+		if (_stage >= BGFX_CONFIG_MAX_TEXTURE_SAMPLERS)
+		{
+			BX_WARN(false, "Invalid texture stage %d (max %d).", _stage, BGFX_CONFIG_MAX_TEXTURE_SAMPLERS);
+			return;
+		}
+
+		if (!isValid(_sampler)
+		||  !s_ctx->m_uniformHandle.isValid(_sampler.idx) )
+		{
+			BX_WARN(false, "Invalid sampler uniform handle %d.", _sampler.idx);
+			return;
+		}
+
+		if (isValid(_handle)
+		&&  !s_ctx->m_textureHandle.isValid(_handle.idx) )
+		{
+			BX_WARN(false, "Invalid texture handle %d.", _handle.idx);
+			return;
+		}
+
 		BX_ASSERT(_stage < g_caps.limits.maxTextureSamplers, "Invalid stage %d (max %d).", _stage, g_caps.limits.maxTextureSamplers);
 
 		if (isValid(_handle) )
@@ -5093,8 +5273,26 @@ namespace bgfx
 
 	void Encoder::setTexture(uint8_t _stage, UniformHandle _sampler, TextureHandle _handle, uint16_t _firstLayer, uint16_t _numLayers, uint8_t _firstMip, uint8_t _numMips, uint32_t _flags, uint8_t _lodMin, uint8_t _lodMax)
 	{
-		BGFX_CHECK_HANDLE("setTexture/UniformHandle", s_ctx->m_uniformHandle, _sampler);
-		BGFX_CHECK_HANDLE_INVALID_OK("setTexture/TextureHandle", s_ctx->m_textureHandle, _handle);
+		if (_stage >= BGFX_CONFIG_MAX_TEXTURE_SAMPLERS)
+		{
+			BX_WARN(false, "Invalid texture stage %d (max %d).", _stage, BGFX_CONFIG_MAX_TEXTURE_SAMPLERS);
+			return;
+		}
+
+		if (!isValid(_sampler)
+		||  !s_ctx->m_uniformHandle.isValid(_sampler.idx) )
+		{
+			BX_WARN(false, "Invalid sampler uniform handle %d.", _sampler.idx);
+			return;
+		}
+
+		if (isValid(_handle)
+		&&  !s_ctx->m_textureHandle.isValid(_handle.idx) )
+		{
+			BX_WARN(false, "Invalid texture handle %d.", _handle.idx);
+			return;
+		}
+
 		BX_ASSERT(_stage < g_caps.limits.maxTextureSamplers, "Invalid stage %d (max %d).", _stage, g_caps.limits.maxTextureSamplers);
 
 		if (isValid(_handle) )
@@ -5148,24 +5346,60 @@ namespace bgfx
 
 	void Encoder::setBuffer(uint8_t _stage, IndexBufferHandle _handle, Access::Enum _access, uint32_t _offset, uint32_t _size)
 	{
+		if (_stage >= BGFX_CONFIG_MAX_TEXTURE_SAMPLERS)
+		{
+			BX_WARN(false, "Invalid compute bind stage %d (max %d).", _stage, BGFX_CONFIG_MAX_TEXTURE_SAMPLERS);
+			return;
+		}
+
 		BX_ASSERT(_stage < g_caps.limits.maxComputeBindings, "Invalid stage %d (max %d).", _stage, g_caps.limits.maxComputeBindings);
-		BGFX_CHECK_HANDLE("setBuffer", s_ctx->m_indexBufferHandle, _handle);
+		if (!isValid(_handle)
+		||  !s_ctx->m_indexBufferHandle.isValid(_handle.idx) )
+		{
+			BX_WARN(false, "Invalid index buffer handle %d.", _handle.idx);
+			return;
+		}
+
 		BX_ASSERT(0 == _offset % kBufferBindingOffsetAlign, "Buffer binding offset %d is not a multiple of %d bytes.", _offset, kBufferBindingOffsetAlign);
 		BGFX_ENCODER(setBuffer(_stage, _handle, _access, _offset, _size) );
 	}
 
 	void Encoder::setBuffer(uint8_t _stage, VertexBufferHandle _handle, Access::Enum _access, uint32_t _offset, uint32_t _size)
 	{
+		if (_stage >= BGFX_CONFIG_MAX_TEXTURE_SAMPLERS)
+		{
+			BX_WARN(false, "Invalid compute bind stage %d (max %d).", _stage, BGFX_CONFIG_MAX_TEXTURE_SAMPLERS);
+			return;
+		}
+
 		BX_ASSERT(_stage < g_caps.limits.maxComputeBindings, "Invalid stage %d (max %d).", _stage, g_caps.limits.maxComputeBindings);
-		BGFX_CHECK_HANDLE("setBuffer", s_ctx->m_vertexBufferHandle, _handle);
+		if (!isValid(_handle)
+		||  !s_ctx->m_vertexBufferHandle.isValid(_handle.idx) )
+		{
+			BX_WARN(false, "Invalid vertex buffer handle %d.", _handle.idx);
+			return;
+		}
+
 		BX_ASSERT(0 == _offset % kBufferBindingOffsetAlign, "Buffer binding offset %d is not a multiple of %d bytes.", _offset, kBufferBindingOffsetAlign);
 		BGFX_ENCODER(setBuffer(_stage, _handle, _access, _offset, _size) );
 	}
 
 	void Encoder::setBuffer(uint8_t _stage, DynamicIndexBufferHandle _handle, Access::Enum _access, uint32_t _offset, uint32_t _size)
 	{
+		if (_stage >= BGFX_CONFIG_MAX_TEXTURE_SAMPLERS)
+		{
+			BX_WARN(false, "Invalid compute bind stage %d (max %d).", _stage, BGFX_CONFIG_MAX_TEXTURE_SAMPLERS);
+			return;
+		}
+
 		BX_ASSERT(_stage < g_caps.limits.maxComputeBindings, "Invalid stage %d (max %d).", _stage, g_caps.limits.maxComputeBindings);
-		BGFX_CHECK_HANDLE("setBuffer", s_ctx->m_dynamicIndexBufferHandle, _handle);
+		if (!isValid(_handle)
+		||  !s_ctx->m_dynamicIndexBufferHandle.isValid(_handle.idx) )
+		{
+			BX_WARN(false, "Invalid dynamic index buffer handle %d.", _handle.idx);
+			return;
+		}
+
 		BX_ASSERT(0 == _offset % kBufferBindingOffsetAlign, "Buffer binding offset %d is not a multiple of %d bytes.", _offset, kBufferBindingOffsetAlign);
 		const DynamicIndexBuffer& dib = s_ctx->m_dynamicIndexBuffers[_handle.idx];
 		BGFX_ENCODER(setBuffer(_stage, dib.m_handle, _access, _offset, _size) );
@@ -5173,8 +5407,20 @@ namespace bgfx
 
 	void Encoder::setBuffer(uint8_t _stage, DynamicVertexBufferHandle _handle, Access::Enum _access, uint32_t _offset, uint32_t _size)
 	{
+		if (_stage >= BGFX_CONFIG_MAX_TEXTURE_SAMPLERS)
+		{
+			BX_WARN(false, "Invalid compute bind stage %d (max %d).", _stage, BGFX_CONFIG_MAX_TEXTURE_SAMPLERS);
+			return;
+		}
+
 		BX_ASSERT(_stage < g_caps.limits.maxComputeBindings, "Invalid stage %d (max %d).", _stage, g_caps.limits.maxComputeBindings);
-		BGFX_CHECK_HANDLE("setBuffer", s_ctx->m_dynamicVertexBufferHandle, _handle);
+		if (!isValid(_handle)
+		||  !s_ctx->m_dynamicVertexBufferHandle.isValid(_handle.idx) )
+		{
+			BX_WARN(false, "Invalid dynamic vertex buffer handle %d.", _handle.idx);
+			return;
+		}
+
 		BX_ASSERT(0 == _offset % kBufferBindingOffsetAlign, "Buffer binding offset %d is not a multiple of %d bytes.", _offset, kBufferBindingOffsetAlign);
 		const DynamicVertexBuffer& dvb = s_ctx->m_dynamicVertexBuffers[_handle.idx];
 		BGFX_ENCODER(setBuffer(_stage, dvb.m_handle, _access, _offset, _size) );
@@ -5182,8 +5428,20 @@ namespace bgfx
 
 	void Encoder::setBuffer(uint8_t _stage, IndirectBufferHandle _handle, Access::Enum _access)
 	{
+		if (_stage >= BGFX_CONFIG_MAX_TEXTURE_SAMPLERS)
+		{
+			BX_WARN(false, "Invalid compute bind stage %d (max %d).", _stage, BGFX_CONFIG_MAX_TEXTURE_SAMPLERS);
+			return;
+		}
+
 		BX_ASSERT(_stage < g_caps.limits.maxComputeBindings, "Invalid stage %d (max %d).", _stage, g_caps.limits.maxComputeBindings);
-		BGFX_CHECK_HANDLE("setBuffer", s_ctx->m_vertexBufferHandle, _handle);
+		if (!isValid(_handle)
+		||  !s_ctx->m_vertexBufferHandle.isValid(_handle.idx) )
+		{
+			BX_WARN(false, "Invalid indirect buffer handle %d.", _handle.idx);
+			return;
+		}
+
 		VertexBufferHandle handle = { _handle.idx };
 		BGFX_ENCODER(setBuffer(_stage, handle, _access) );
 	}
@@ -5195,10 +5453,25 @@ namespace bgfx
 
 	void Encoder::setImage(uint8_t _stage, TextureHandle _handle, uint16_t _firstLayer, uint16_t _numLayers, uint8_t _mip, Access::Enum _access, TextureFormat::Enum _format)
 	{
+		if (_stage >= BGFX_CONFIG_MAX_TEXTURE_SAMPLERS)
+		{
+			BX_WARN(false, "Invalid compute image stage %d (max %d).", _stage, BGFX_CONFIG_MAX_TEXTURE_SAMPLERS);
+			return;
+		}
+
 		BX_ASSERT(_stage < g_caps.limits.maxComputeBindings, "Invalid stage %d (max %d).", _stage, g_caps.limits.maxComputeBindings);
-		BGFX_CHECK_HANDLE_INVALID_OK("setImage/TextureHandle", s_ctx->m_textureHandle, _handle);
+		if (isValid(_handle)
+		&&  !s_ctx->m_textureHandle.isValid(_handle.idx) )
+		{
+			BX_WARN(false, "Invalid texture handle %d.", _handle.idx);
+			return;
+		}
+
 		_format = TextureFormat::Count == _format
-			? TextureFormat::Enum(s_ctx->m_textureRef[_handle.idx].m_format)
+			? (isValid(_handle)
+				? TextureFormat::Enum(s_ctx->m_textureRef[_handle.idx].m_format)
+				: TextureFormat::Unknown
+				)
 			: _format
 			;
 		BX_ASSERT(_format != TextureFormat::BGRA8
@@ -7593,14 +7866,28 @@ namespace bgfx
 
 	void setViewUniform(ViewId _id, UniformHandle _handle, const void* _value, uint16_t _num)
 	{
-		BX_ASSERT(checkView(_id), "Invalid view id: %d", _id);
-		BGFX_CHECK_HANDLE("setUniform", s_ctx->m_uniformHandle, _handle);
+		if (!checkView(_id)
+		||  !isValid(_handle)
+		||  !s_ctx->m_uniformHandle.isValid(_handle.idx)
+		||  NULL == _value)
+		{
+			BX_WARN(false, "Invalid view/uniform parameters (view: %d, handle: %d).", _id, _handle.idx);
+			return;
+		}
+
 		s_ctx->setViewUniform(_id, _handle, _value, _num);
 	}
 
 	void setFrameUniform(UniformHandle _handle, const void* _value, uint16_t _num)
 	{
-		BGFX_CHECK_HANDLE("setUniform", s_ctx->m_uniformHandle, _handle);
+		if (!isValid(_handle)
+		||  !s_ctx->m_uniformHandle.isValid(_handle.idx)
+		||  NULL == _value)
+		{
+			BX_WARN(false, "Invalid uniform parameters (handle: %d).", _handle.idx);
+			return;
+		}
+
 		s_ctx->setViewUniform(UINT16_MAX, _handle, _value, _num);
 	}
 

@@ -7,6 +7,260 @@
 
 namespace bgfx
 {
+	namespace
+	{
+		struct ShaderBinaryReader
+		{
+			ShaderBinaryReader(const void* _data, uint32_t _size)
+				: m_ptr( (const uint8_t*)_data)
+				, m_end( (const uint8_t*)_data + _size)
+			{
+			}
+
+			template<typename Ty>
+			bool read(Ty& _value)
+			{
+				if (size_t(m_end - m_ptr) < sizeof(Ty) )
+				{
+					return false;
+				}
+
+				_value = bx::loadUnaligned<Ty>(m_ptr);
+				m_ptr += sizeof(Ty);
+				return true;
+			}
+
+			const uint8_t* readBytes(uint32_t _size)
+			{
+				if (size_t(m_end - m_ptr) < _size)
+				{
+					return NULL;
+				}
+
+				const uint8_t* ptr = m_ptr;
+				m_ptr += _size;
+				return ptr;
+			}
+
+			uint32_t getRemaining() const
+			{
+				return uint32_t(m_end - m_ptr);
+			}
+
+			const uint8_t* m_ptr;
+			const uint8_t* m_end;
+		};
+
+		bool isShaderNameValid(const char* _name, uint32_t _len)
+		{
+			if (0 == _len)
+			{
+				return false;
+			}
+
+			const char ch = _name[0];
+			if (!bx::isAlpha(ch)
+			&&  '_' != ch)
+			{
+				return false;
+			}
+
+			for (uint32_t ii = 1; ii < _len; ++ii)
+			{
+				if (!bx::isAlphaNum(_name[ii])
+				&&  '_' != _name[ii])
+				{
+					return false;
+				}
+			}
+
+			return true;
+		}
+	} // namespace
+
+	bool validateShaderBinary(const void* _data, uint32_t _size)
+	{
+		if (NULL == _data)
+		{
+			return false;
+		}
+
+		ShaderBinaryReader reader(_data, _size);
+
+		uint32_t magic;
+		if (!reader.read(magic)
+		||  !isShaderBin(magic) )
+		{
+			return false;
+		}
+
+		const uint8_t version = uint8_t(magic>>24);
+		if (version < 12
+		||  version > kShaderBinVersion)
+		{
+			return false;
+		}
+
+		uint32_t hashIn;
+		if (!reader.read(hashIn) )
+		{
+			return false;
+		}
+
+		if (version >= 6)
+		{
+			uint32_t hashOut;
+			if (!reader.read(hashOut) )
+			{
+				return false;
+			}
+		}
+
+		uint32_t rawSrvMask;
+		uint32_t rawUavMask;
+		if (!reader.read(rawSrvMask)
+		||  !reader.read(rawUavMask) )
+		{
+			return false;
+		}
+
+		uint16_t count;
+		if (!reader.read(count)
+		||  count > BGFX_CONFIG_MAX_UNIFORMS)
+		{
+			return false;
+		}
+
+		const uint8_t* names[BGFX_CONFIG_MAX_UNIFORMS];
+		uint16_t nameLengths[BGFX_CONFIG_MAX_UNIFORMS];
+		bool predefinedSeen[PredefinedUniform::Count] = {};
+
+		char name[256];
+
+		for (uint32_t ii = 0; ii < count; ++ii)
+		{
+			uint8_t nameSize;
+			if (!reader.read(nameSize)
+			||  0 == nameSize)
+			{
+				return false;
+			}
+
+			const uint8_t* nameData = reader.readBytes(nameSize);
+			if (NULL == nameData)
+			{
+				return false;
+			}
+
+			bx::memCopy(name, nameData, nameSize);
+			name[nameSize] = '\0';
+
+			if (!isShaderNameValid(name, nameSize) )
+			{
+				return false;
+			}
+
+			for (uint32_t jj = 0; jj < ii; ++jj)
+			{
+				if (nameLengths[jj] == nameSize
+				&&  0 == bx::memCmp(names[jj], name, nameSize) )
+				{
+					return false;
+				}
+			}
+
+			names[ii]       = nameData;
+			nameLengths[ii] = nameSize;
+
+			const PredefinedUniform::Enum predefined = nameToPredefinedUniformEnum(name);
+			if (PredefinedUniform::Count != predefined)
+			{
+				if (predefinedSeen[predefined] )
+				{
+					return false;
+				}
+
+				predefinedSeen[predefined] = true;
+			}
+
+			uint8_t type;
+			if (!reader.read(type) )
+			{
+				return false;
+			}
+
+			const uint8_t uniformType = type & ~kUniformMask;
+			if (uniformType > UniformType::Mat4)
+			{
+				return false;
+			}
+
+			uint16_t num = 0;
+			if (version < 14)
+			{
+				uint8_t num8;
+				if (!reader.read(num8) )
+				{
+					return false;
+				}
+				num = num8;
+			}
+			else if (!reader.read(num) )
+			{
+				return false;
+			}
+
+			uint16_t regIndex;
+			uint16_t regCount;
+			if (!reader.read(regIndex)
+			||  !reader.read(regCount) )
+			{
+				return false;
+			}
+
+			if (version >= 8)
+			{
+				uint8_t texComponent;
+				uint8_t texDimension;
+				if (!reader.read(texComponent)
+				||  !reader.read(texDimension) )
+				{
+					return false;
+				}
+
+				if (texDimension > TextureDimension::Count)
+				{
+					return false;
+				}
+
+				if (TextureComponentType::Count == idToTextureComponentType(texComponent) )
+				{
+					return false;
+				}
+			}
+
+			if (version >= 10)
+			{
+				uint16_t texFormat;
+				if (!reader.read(texFormat) )
+				{
+					return false;
+				}
+			}
+
+			BX_UNUSED(num, regIndex, regCount);
+		}
+
+		uint32_t shaderSize;
+		if (!reader.read(shaderSize)
+		||  uint64_t(shaderSize) + 1 > reader.getRemaining() )
+		{
+			return false;
+		}
+
+		return true;
+	}
+
 	struct DescriptorTypeToId
 	{
 		DescriptorType::Enum type;

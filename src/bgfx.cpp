@@ -1812,10 +1812,21 @@ namespace bgfx
 
 		const FrameArenaT<uint64_t, kDrawCallBlock>& submitKeys = m_submitKeys;
 
+		bool sorted = 0 != m_numRenderItems;
+		uint64_t prevKey = 0;
+		uint64_t bitsOr  = 0;
+		uint64_t bitsAnd = ~uint64_t(0);
+
 		for (uint32_t ii = 0, num = m_numRenderItems; ii < num; ++ii)
 		{
-			m_sortKeys[ii]   = SortKey::remapView(submitKeys[ii], m_viewOrder);
+			const uint64_t key = SortKey::remapView(submitKeys[ii], m_viewOrder);
+			m_sortKeys[ii]   = key;
 			m_sortValues[ii] = RenderItemCount(ii);
+
+			sorted  &= prevKey <= key;
+			prevKey  = key;
+			bitsOr  |= key;
+			bitsAnd &= key;
 		}
 
 		s_ctx->reserveTemp(bx::max(
@@ -1825,7 +1836,13 @@ namespace bgfx
 			, m_uniformCacheFrame.m_numItems
 			) );
 
-		bx::radixSort(m_sortKeys, s_ctx->m_tempKeys, m_sortValues, s_ctx->m_tempValues, m_numRenderItems);
+		// Keys are frequently submitted already in order (same view, same
+		// state, monotonic sequence/depth). Detecting this while packing the
+		// keys avoids a redundant histogram pass over the whole array.
+		if (!sorted)
+		{
+			bx::radixSort(m_sortKeys, s_ctx->m_tempKeys, m_sortValues, s_ctx->m_tempValues, m_numRenderItems, bitsOr, bitsAnd);
+		}
 
 		reserveBlitKeys(m_numBlitItems);
 
